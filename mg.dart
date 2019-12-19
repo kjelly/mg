@@ -271,7 +271,8 @@ void handleGrep(
           var output = '''
 $line
 path: $i
-content: $c
+content:
+$c
 $line
               ''';
           show(output);
