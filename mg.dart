@@ -215,7 +215,6 @@ void handleGrep(
   } else {}
 
   if (argResult['from'] != "") {
-    print("GG");
     var c = '';
     if (register.containsKey(argResult['from'])) {
       c = register[argResult['from']];
