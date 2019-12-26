@@ -1,4 +1,4 @@
-name: cmdline
+name: mg
 dependencies:
     args:
     threading:
