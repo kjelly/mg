@@ -10,7 +10,6 @@ import 'package:dcache/dcache.dart';
 import 'package:mg/utils/system.dart';
 import 'package:mg/utils/misc.dart';
 
-
 Future<String> grepDart(String pattern, String text,
     {DateTime start = null,
     DateTime end = null,
@@ -27,10 +26,10 @@ Future<String> grepDart(String pattern, String text,
       ret = ret.where((s) {
         DateTime t;
         t = DateTime.tryParse(s.split(' ').getRange(0, 2).join(' '));
-        if (t == null){
+        if (t == null) {
           t = DateTime.tryParse(s.split(' ').getRange(0, 1).join(' '));
         }
-        if (t == null ){
+        if (t == null) {
           return false;
         }
         if (start != null && t.isBefore(start)) {
@@ -49,9 +48,18 @@ Future<String> grepDart(String pattern, String text,
 
 void main(List<String> args) async {
   var parser = new ArgParser();
-  parser.addMultiOption('file', abbr: "f");
-  parser.addMultiOption('command', abbr: "c");
+  parser.addMultiOption('file',
+      abbr: "f", help: 'read the content from the files.');
+  parser.addMultiOption('command',
+      abbr: "c", help: 'read the content from the command.');
+  parser.addOption('command-from', help: 'read the content from the command.');
+  parser.addOption('file-from', help: 'read the content from the command.');
+  parser.addFlag('help', abbr: "h");
   var results = parser.parse(args);
+  if (results['help']) {
+    print(parser.usage);
+    return;
+  }
 
   List<List<String>> commandList = [];
   List<String> fileList = [];
@@ -61,6 +69,17 @@ void main(List<String> args) async {
   }
   for (var i in results['file']) {
     fileList.add(i);
+  }
+
+  File f;
+
+  f = File(results['command-from'] ?? "");
+  if (await f.exists()){
+    fileList.addAll(f.readAsLinesSync());
+  }
+  f = File(results['file-from'] ?? "");
+  if (await f.exists()){
+    fileList.addAll(f.readAsLinesSync());
   }
 
   Map<String, List<String>> content = {};
@@ -399,4 +418,3 @@ class AddFileCommand extends Command {
     fileList.add(argResults.rest.join());
   }
 }
-
