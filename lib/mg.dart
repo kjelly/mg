@@ -4,70 +4,40 @@ import 'dart:convert';
 import 'package:args/args.dart';
 import "package:args/command_runner.dart";
 import 'package:dart_console/dart_console.dart' as dart_console;
-import "package:threading/threading.dart";
 import 'package:ansicolor/ansicolor.dart';
 import 'package:cli_repl/cli_repl.dart';
 import 'package:dcache/dcache.dart';
+import 'package:mg/utils/system.dart';
+import 'package:mg/utils/misc.dart';
 
-Future<String> getContentFromCommand(List<String> command) async {
-  try {
-    var result = await Process.run(
-        command[0], command.getRange(1, command.length).toList(),
-        runInShell: true);
-    if (result.exitCode == 0) {
-      var ret = result.stdout as String;
-      return ret;
-    } else {
-      return "failed to get content";
-    }
-  } catch (e) {
-    return Future.value("");
-  }
-}
-
-Future<String> getContentFromFile(String path) async {
-  try {
-    var f = new File(path);
-    if (f.existsSync()) {
-      return f.readAsString();
-    }
-    return Future.value("");
-  } catch (e) {
-    return Future.value("");
-  }
-}
-
-bool contains(String text, String pattern) {
-  for (var i in pattern.split('|')) {
-    if (text.contains(i)) {
-      return true;
-    }
-  }
-  return false;
-}
 
 Future<String> grepDart(String pattern, String text,
-    {DateTime start = null, DateTime end = null, bool invert = false}) async {
+    {DateTime start = null,
+    DateTime end = null,
+    bool invert = false,
+    bool regex = false}) async {
   var ret = await runThread(() {
     var ret = text.split('\n').where((s) {
       if (invert) {
-        return !contains(s, pattern);
+        return !contains(s, pattern, regex: regex);
       }
-      return contains(s, pattern);
+      return contains(s, pattern, regex: regex);
     });
     if (start != null || end != null) {
       ret = ret.where((s) {
-        if (end == null) {
-          DateTime t;
-          try {
-            t = DateTime.parse(s.split(' ').getRange(0, 2).join(' '));
-          } catch (e) {
-            return false;
-          }
-          if (t.isBefore(start)) {
-            return false;
-          }
-          return true;
+        DateTime t;
+        t = DateTime.tryParse(s.split(' ').getRange(0, 2).join(' '));
+        if (t == null){
+          t = DateTime.tryParse(s.split(' ').getRange(0, 1).join(' '));
+        }
+        if (t == null ){
+          return false;
+        }
+        if (start != null && t.isBefore(start)) {
+          return false;
+        }
+        if (end != null && t.isAfter(end)) {
+          return false;
         }
         return true;
       });
@@ -77,7 +47,6 @@ Future<String> grepDart(String pattern, String text,
   return Future.value(ret);
 }
 
-//reload, grep, cmd, file,
 void main(List<String> args) async {
   var parser = new ArgParser();
   parser.addMultiOption('file', abbr: "f");
@@ -136,35 +105,29 @@ void main(List<String> args) async {
   }
 }
 
-List<String> parseLine(String line) {
-  var stack = List<String>();
-  var output = List<String>();
-  var temp = '';
-  for (var i in line.trim().split('')) {
-    if (i == ' ') {
-      if (stack.isEmpty) {
-        output.add(temp);
-        temp = '';
-      } else {
-        temp += i;
-      }
-    } else if (i == "'") {
-      if (stack.isEmpty) {
-        stack.add("'");
-      } else {
-        output.add(temp);
-        temp = '';
-        stack.removeLast();
-      }
-    } else {
-      temp += i;
-    }
+Future<String> doGrep(
+    String text, List<String> pattern, List<String> invertPattern,
+    {DateTime startTime = null,
+    DateTime endTime = null,
+    bool regex = false}) async {
+  var futureString = Future.value(text);
+  for (var p in pattern) {
+    futureString = futureString.then((c) {
+      return grepDart(p, c, start: startTime, end: endTime, regex: regex);
+    });
   }
-  if (temp.isNotEmpty) {
-    output.add(temp);
+  for (var p in invertPattern) {
+    futureString = futureString.then((c) {
+      return grepDart(p, c,
+          start: startTime, end: endTime, invert: true, regex: regex);
+    });
   }
-  output = output.where((s) => s.isNotEmpty).toList();
-  return output;
+  for (var p in pattern) {
+    futureString = futureString.then((c) {
+      return applyColor(c, p, AnsiPen()..red(), regex: regex);
+    });
+  }
+  return futureString;
 }
 
 void handleGrep(
@@ -178,7 +141,11 @@ void handleGrep(
   var cacheKey = cacheKeyList.join(' ');
 
   if (cache.containsKey(cacheKey)) {
-    show(cache.get(cacheKey));
+    var text = cache.get(cacheKey);
+    show(text);
+    if (argResult['fzf']) {
+      callFzf(text);
+    }
     return;
   }
 
@@ -186,20 +153,10 @@ void handleGrep(
   var invertPattern = argResult['invert'];
   var keys = argResult['key'];
   var registerKey = argResult['to'];
+  var regex = argResult['regex'];
 
-  DateTime startTime;
-  if (argResult['start'] != null) {
-    try {
-      startTime = DateTime.parse(argResult['start']);
-    } catch (e) {
-      var diff = int.tryParse(argResult['start']);
-      if (diff == null) {
-        startTime = null;
-      } else {
-        startTime = DateTime.now().subtract(Duration(hours: diff));
-      }
-    }
-  }
+  DateTime startTime = parseTime(argResult['start']);
+  DateTime endTime = parseTime(argResult['end']);
   var jobs = 0;
   var worker = int.tryParse(argResult['worker']) ?? 1000;
   var greenPen = AnsiPen()..green();
@@ -219,27 +176,12 @@ void handleGrep(
     if (register.containsKey(argResult['from'])) {
       c = register[argResult['from']];
     }
-
-    var futureString = Future.value(c);
-    for (var p in pattern) {
-      futureString = futureString.then((c) {
-        return grepDart(p, c, start: startTime);
-      });
-    }
-    for (var p in invertPattern) {
-      futureString = futureString.then((c) {
-        return grepDart(p, c, start: startTime, invert: true);
-      });
-    }
-    for (var p in pattern) {
-      futureString = futureString.then((c) {
-        return applyColor(c, p, AnsiPen()..red());
-      });
-    }
-    show(await futureString);
+    show(await doGrep(c, pattern, invertPattern,
+        startTime: startTime, endTime: endTime, regex: regex));
     return;
   }
 
+  var completeOutput = '';
   for (var i in content.keys) {
     if (!containKeys(i, keys)) {
       continue;
@@ -250,22 +192,8 @@ void handleGrep(
       }
 
       jobs += 1;
-      var futureString = Future.value(c);
-      for (var p in pattern) {
-        futureString = futureString.then((c) {
-          return grepDart(p, c, start: startTime);
-        });
-      }
-      for (var p in invertPattern) {
-        futureString = futureString.then((c) {
-          return grepDart(p, c, start: startTime, invert: true);
-        });
-      }
-      for (var p in pattern) {
-        futureString = futureString.then((c) {
-          return applyColor(c, p, AnsiPen()..red());
-        });
-      }
+      var futureString = doGrep(c, pattern, invertPattern,
+          startTime: startTime, endTime: endTime, regex: regex);
       futureString.then((c) {
         if (c.isNotEmpty) {
           var output = '''
@@ -276,10 +204,7 @@ $c
 $line
               ''';
           show(output);
-          cache.set(cacheKey, output);
-          if (registerKey != "") {
-            register[registerKey] = output;
-          }
+          completeOutput += output + '\n';
         }
         jobs -= 1;
       });
@@ -288,20 +213,13 @@ $line
   while (jobs > 0) {
     await Future.delayed(Duration(milliseconds: 1));
   }
-}
-
-List<String> split(String s, int offset) {
-  List<String> ret = [];
-  var parts = s.split('\n');
-
-  for (var i = 0; i < parts.length; i += offset) {
-    if ((i + offset) > parts.length) {
-      ret.add(parts.getRange(i, parts.length).join('\n'));
-      break;
-    }
-    ret.add(parts.getRange(i, i + offset).join('\n'));
+  cache.set(cacheKey, completeOutput);
+  if (registerKey != "") {
+    register[registerKey] = completeOutput;
   }
-  return ret;
+  if (argResult['fzf']) {
+    callFzf(completeOutput);
+  }
 }
 
 void handleReload(Map<String, List<String>> content,
@@ -342,39 +260,25 @@ void handleReload(Map<String, List<String>> content,
   progress.update(100);
 }
 
-Future<String> applyColor(String text, String pattern, AnsiPen pen) async {
+Future<String> applyColor(String text, String pattern, AnsiPen pen,
+    {bool regex = false}) async {
   return await runThread(() {
-    var lst = text.split(pattern);
-    return lst.join(pen(pattern));
-  }) as String;
-}
-
-Future<dynamic> runThread(dynamic Function() func) async {
-  dynamic ret;
-  var lock = Lock();
-  var thread = new Thread(() async {
-    await lock.acquire();
-    ret = func();
-    await lock.release();
-  });
-  await thread.start();
-  await Future.delayed(Duration(milliseconds: 1));
-  await thread.join();
-  await lock.acquire();
-  await lock.release();
-  return Future.value(ret);
-}
-
-bool containKeys(String s, List<String> keys) {
-  if (keys == null) {
-    return true;
-  }
-  for (var i in keys) {
-    if (!s.contains(i)) {
-      return false;
+    if (regex) {
+      var re = RegExp(pattern);
+      var count = 0;
+      for (var i in re.allMatches(text)) {
+        count += 1;
+        text = text.split(i.group(0)).join(pen(i.group(0)));
+        if (count > 1000) {
+          return text;
+        }
+      }
+      return text;
+    } else {
+      var lst = text.split(pattern);
+      return lst.join(pen(pattern));
     }
-  }
-  return true;
+  }) as String;
 }
 
 String grepActorFunction(String args_string) {
@@ -415,16 +319,22 @@ class GrepCommand extends Command {
   Map<String, List<String>> content;
   dynamic Function(String) show;
   Cache cache;
-  Map<String,String> register;
+  Map<String, String> register;
 
   GrepCommand(this.content, this.show, this.cache, this.register) {
     argParser.addOption('start',
         abbr: 's', help: "'2019-01-02 13:13:13' or 4 for four hours ago");
+    argParser.addOption('end',
+        abbr: 'e', help: "'2019-01-02 13:13:13' or 4 for four hours ago");
     argParser.addMultiOption('key', abbr: 'k');
     argParser.addMultiOption('invert', abbr: 'v');
     argParser.addOption('worker', abbr: 'w', defaultsTo: "100");
-    argParser.addOption('from', abbr: 'f', defaultsTo: "");
-    argParser.addOption('to', abbr: 't', defaultsTo: "a");
+    argParser.addOption('from',
+        abbr: 'f', defaultsTo: "", help: "load data from the register.");
+    argParser.addOption('to',
+        abbr: 't', defaultsTo: "a", help: "store data into the register.");
+    argParser.addFlag('fzf', abbr: 'z', defaultsTo: false);
+    argParser.addFlag('regex', abbr: 'r', defaultsTo: false);
   }
 
   void run() async {
@@ -489,3 +399,4 @@ class AddFileCommand extends Command {
     fileList.add(argResults.rest.join());
   }
 }
+
