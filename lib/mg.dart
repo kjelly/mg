@@ -1,14 +1,15 @@
-import 'dart:io';
-import "package:console/console.dart";
 import 'dart:convert';
+import 'dart:io';
+
+import 'package:ansicolor/ansicolor.dart';
 import 'package:args/args.dart';
 import "package:args/command_runner.dart";
-import 'package:dart_console/dart_console.dart' as dart_console;
-import 'package:ansicolor/ansicolor.dart';
 import 'package:cli_repl/cli_repl.dart';
+import "package:console/console.dart";
+import 'package:dart_console/dart_console.dart' as dart_console;
 import 'package:dcache/dcache.dart';
-import 'package:mg/utils/system.dart';
 import 'package:mg/utils/misc.dart';
+import 'package:mg/utils/system.dart';
 
 Future<String> grepDart(String pattern, String text,
     {DateTime start = null,
@@ -25,9 +26,12 @@ Future<String> grepDart(String pattern, String text,
     if (start != null || end != null) {
       ret = ret.where((s) {
         DateTime t;
-        t = DateTime.tryParse(s.split(' ').getRange(0, 2).join(' '));
-        if (t == null) {
-          t = DateTime.tryParse(s.split(' ').getRange(0, 1).join(' '));
+        var parts = s.split(' ');
+        if(parts.length > 1){
+          t = DateTime.tryParse(parts.getRange(0, 2).join(' '));
+        }
+        if (t == null && parts.length > 0) {
+          t = DateTime.tryParse(parts.getRange(0, 1).join(' '));
         }
         if (t == null) {
           return false;
@@ -75,7 +79,9 @@ void main(List<String> args) async {
 
   f = File(results['command-from'] ?? "");
   if (await f.exists()){
-    fileList.addAll(f.readAsLinesSync());
+    for(var i in f.readAsLinesSync()){
+      commandList.add(i.split(' '));
+    }
   }
   f = File(results['file-from'] ?? "");
   if (await f.exists()){
