@@ -4,7 +4,9 @@ dependencies:
     threading:
     ansicolor:
     colorize: any
-    dart_console:
+    dart_console: 1.0.0
     console:
     cli_repl:
     dcache:
+environment:
+  sdk: '>=2.10.0 <3.0.0'

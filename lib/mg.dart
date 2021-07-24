@@ -90,7 +90,7 @@ void main(List<String> args) async {
 
   Map<String, List<String>> content = {};
   Cache cache =
-      new SimpleCache<String, String>(storage: new SimpleStorage(size: 10));
+      new SimpleCache(storage: InMemoryStorage(10));
   var register = Map<String, String>();
 
   await handleReload(content, commandList, fileList);
